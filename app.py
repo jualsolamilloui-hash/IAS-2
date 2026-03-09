@@ -2,6 +2,8 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from flask_mysqldb import MySQL
 import bcrypt
 from cryptography.fernet import Fernet
+from werkzeug.utils import secure_filename
+import uuid
 import os
 from dotenv import load_dotenv
 
@@ -28,23 +30,35 @@ def encrypt_email(email):
 def decrypt_email(encrypted_email):
     return cipher.decrypt(encrypted_email.encode()).decode('utf-8')
 
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic'}
+def save_uploaded_image(file):
+    ext = file.filename.rsplit('.', 1)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return None
+
+    folder = 'static/upload'
+
+    safe_name = secure_filename(file.filename.rsplit('.', 1)[0])
+    unique_id = uuid.uuid4().hex[:8]
+    final_filename = f"{safe_name}-{unique_id}.{ext}"
+
+    os.makedirs(folder, exist_ok=True)
+    file.save(os.path.join(folder, final_filename))
+
+    return final_filename
+
 @app.route('/')
 def home():
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT id, email, password FROM users")
+    cursor.execute("SELECT id, email, password, fname, id_num FROM users")
     users_raw = cursor.fetchall()
     users = []
     for user in users_raw:
-        # user = (id, encrypted_email, password)
         try:
             decrypted_email = decrypt_email(user[1])
-            # Append a TUPLE: (id, decrypted_email, password)
-            users.append((user[0], decrypted_email, user[2]))
+            users.append((user[0], decrypted_email, user[2], user[3], user[4],))
         except Exception as e:
-            # If decryption fails, print error (check your console)
             print(f"Decryption error for user {user[0]}: {e}")
-            # Optionally, you could still include the user with placeholder email
-            # users.append((user[0], "[decryption failed]", user[2]))
             continue
     cursor.close()
     return render_template("home.html", users=users)
@@ -58,6 +72,8 @@ def auth():
 def signup_process():
     email = request.form["email"]
     password = request.form["password"]
+    fname = request.form["fname"]
+    id_num = request.form["id_num"]
 
     # Encrypt the email before storing
     encrypted_email = encrypt_email(email)
@@ -66,8 +82,6 @@ def signup_process():
     hashed_password = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
 
     cursor = mysql.connection.cursor()
-    # We cannot search by encrypted email because encryption is non‑deterministic.
-    # Instead, we check for duplicates by fetching all users and decrypting.
     cursor.execute("SELECT email FROM users")
     existing_encrypted = cursor.fetchall()
     for row in existing_encrypted:
@@ -78,8 +92,8 @@ def signup_process():
 
     # Insert new user
     cursor.execute(
-        "INSERT INTO users (email, password) VALUES (%s, %s)",
-        (encrypted_email, hashed_password)
+        "INSERT INTO users (email, password, fname, id_num) VALUES (%s, %s, %s, %s)",
+        (encrypted_email, hashed_password, fname, id_num)
     )
     mysql.connection.commit()
     cursor.close()
@@ -129,11 +143,60 @@ def logout():
 
 @app.route('/products')
 def products():
-    return render_template("prod.html")
+    cur = mysql.connection.cursor()
+    cur.execute("SELECT id, prod_name, description, price, image FROM products ORDER BY created_at DESC")
+    products = cur.fetchall()
+    cur.close()
+    return render_template("prod.html", products=products)
 
-@app.route('/up_products')
+@app.route('/up_products', methods=['GET', 'POST'])
 def up_products():
-    return render_template("prod.html")
+    if request.method == 'POST':
+        prod_name   = request.form.get('prod_name')
+        description = request.form.get('description')
+        price       = request.form.get('price')
+        image_file  = request.files.get('product_image')
+
+        # Save image using your helper
+        filename = None
+        if image_file and image_file.filename:
+            filename = save_uploaded_image(image_file)
+            if filename is None:
+                flash('Invalid image type. Allowed: png, jpg, jpeg, gif, webp, heic', 'error')
+                return redirect(url_for('products'))
+
+        # Insert into MySQL
+        cur = mysql.connection.cursor()
+        cur.execute(
+            "INSERT INTO products (prod_name, description, price, image) VALUES (%s, %s, %s, %s)",
+            (prod_name, description, price, filename)
+        )
+        mysql.connection.commit()
+        cur.close()
+
+        flash(f'Product "{prod_name}" added successfully!', 'success')
+        return redirect(url_for('products'))
+
+    return redirect(url_for('products'))  # GET just goes back to products page
+
+@app.route('/edit_product', methods=['POST'])
+def edit_product():
+    product_id  = request.form.get('product_id')
+    prod_name   = request.form.get('prod_name')
+    description = request.form.get('description')
+    price       = request.form.get('price')
+
+    cur = mysql.connection.cursor()
+    cur.execute(
+        "UPDATE products SET prod_name=%s, description=%s, price=%s WHERE id=%s",
+        (prod_name, description, price, product_id)
+    )
+    mysql.connection.commit()
+    cur.close()
+
+    flash(f'Product "{prod_name}" updated successfully!', 'success')
+    return redirect(url_for('products'))
+
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -48,7 +48,8 @@
             <thead class="table-dark">
                 <tr>
                     <th>Email</th>
-                    <th>Password</th>
+                    <th>Full Name</th>
+                    <th>Id Number</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -57,7 +58,9 @@
                     {% for user in users %}
                     <tr>
                         <td>{{ user[1] }}</td>
-                        <td>{{ user[2] }}</td>   
+                        <td>{{ user[3] }}</td>
+                        <td>{{ user[4] }}</td>
+                         
                         <td>
                             <a href="#" class="btn btn-sm btn-danger">Block</a>
                         </td>
